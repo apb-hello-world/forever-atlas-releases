@@ -1,0 +1,55 @@
+name: Sign and publish release
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        required: true
+        description: Existing draft version tag, such as v0.4.0-beta.1
+      companion_version:
+        required: true
+        description: Companion version, such as 0.4.0b1
+      addon_version:
+        required: true
+        description: Addon version
+      channel:
+        type: choice
+        options: [preview, stable]
+        default: preview
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      COMPANION_VERSION: ${{ inputs.companion_version }}
+      ADDON_VERSION: ${{ inputs.addon_version }}
+      CHANNEL: ${{ inputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install cryptography==50.0.2
+      - name: Download reviewed draft packages
+        shell: bash
+        run: gh release download "$RELEASE_TAG" --pattern 'ForeverAtlas-Setup.exe' --pattern 'ForeverMap-addon.zip' --dir artifacts
+      - name: Sign manifest
+        run: python sign-release.py
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+      - name: Publish version and channel metadata
+        shell: bash
+        run: |
+          gh release upload "$RELEASE_TAG" manifest.json
+          if [ "$CHANNEL" = preview ]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+          fi
+          gh release view "$CHANNEL" >/dev/null 2>&1 || gh release create "$CHANNEL" --title "$CHANNEL updates" --notes 'Signed update metadata. Download the versioned installer from its release.' --prerelease --latest=false
+          gh release upload "$CHANNEL" manifest.json --clobber
