@@ -11,6 +11,15 @@ on:
       addon_version:
         required: true
         description: Addon version
+      companion_target:
+        type: choice
+        options: [forever-atlas-windows, legacy-python]
+        default: forever-atlas-windows
+        description: Installer compatibility target
+      publish_channel:
+        type: boolean
+        default: false
+        description: Publish the reviewed draft and advance the channel (leave off to sign for testing)
       channel:
         type: choice
         options: [preview, stable]
@@ -29,23 +38,29 @@ jobs:
       COMPANION_VERSION: ${{ inputs.companion_version }}
       ADDON_VERSION: ${{ inputs.addon_version }}
       CHANNEL: ${{ inputs.channel }}
+      COMPANION_TARGET: ${{ inputs.companion_target }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: pip install cryptography==50.0.2
+      - run: python -m unittest test_release_rules.py
       - name: Download reviewed draft packages
         shell: bash
-        run: gh release download "$RELEASE_TAG" --pattern 'ForeverAtlas-Setup.exe' --pattern 'ForeverMap-addon.zip' --dir artifacts
+        run: |
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          gh release download "$RELEASE_TAG" --pattern 'ForeverAtlas-Setup.exe' --pattern 'ForeverMap-addon.zip' --dir artifacts
       - name: Sign manifest
         run: python sign-release.py
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+      - name: Attach signed metadata to the draft
+        run: gh release upload "$RELEASE_TAG" manifest.json --clobber
       - name: Publish version and channel metadata
+        if: inputs.publish_channel
         shell: bash
         run: |
-          gh release upload "$RELEASE_TAG" manifest.json
           if [ "$CHANNEL" = preview ]; then
             gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
           else
